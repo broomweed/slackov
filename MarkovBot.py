@@ -210,7 +210,7 @@ class MarkovBot(slackbot.Slackbot):
                		chain = word + ' ' + chain
                		word = self.chooseWordFromList( self.dictionary.get(word)[0] )
 
-		return chain
+		return chain.capitalize()
             
         
 
