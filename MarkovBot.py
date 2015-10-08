@@ -3,6 +3,7 @@ import time
 import random
 import pickle
 import json
+import re
 
 
 class MarkovBot(slackbot.Slackbot):
@@ -24,6 +25,7 @@ class MarkovBot(slackbot.Slackbot):
 		try:
 			self.loadDictionary()
 			print ('DICTIONARY LOADED SUCCESSFULLY')
+			self.inventory = []
 		except IOError:
 			print ('DICTIONARY COULD NOT BE LOADED')
 
@@ -101,7 +103,53 @@ class MarkovBot(slackbot.Slackbot):
 	def onPrivateMessageReceived (self, channel, sender, message):
 
 		# PMs don't teach the bot anything, but will always get a response (if the bot can provide one)
-		
+
+		if re.match(r'^<@.*>[:,]? take ', message):
+			item = re.sub(r'^<@.*>[:,]? take +', '', message)
+			# get info about user
+			callargs = {'token': self.TOKEN, 'user': sender}
+			info = json.loads(self.CLIENT.api_call('users.info', callargs))
+			item = re.sub('my', "%s's" % info['user']['name'], item)
+			item = re.sub('this', 'a', item)
+			response = "I'm now holding %s" % item
+			self.inventory.append(item)
+			if (len(self.inventory) > 3):
+				response += ", but had to drop %s" % self.inventory.pop(0)
+			self.sendMessage(channel, response)
+			return
+
+		if re.match(r'^<@.*>[:,]? drop ', message):
+			item = re.sub(r'^<@.*>[:,]? drop +', '', message)
+			# get info about user
+			callargs = {'token': self.TOKEN, 'user': sender}
+			info = json.loads(self.CLIENT.api_call('users.info', callargs))
+			# TODO: fix a/an
+			item = re.sub('that', 'a', item)
+			item = re.sub('the', 'a', item)
+			error_item = re.sub('my', 'your', item)
+			item = re.sub('my', "%s's" % info['user']['name'], item)
+			response = "I'm not holding %s" % error_item
+			if item in self.inventory:
+				response = "Dropped %s" % item
+			self.inventory = [x for x in self.inventory if x != item]
+			self.sendMessage(channel, response)
+			return
+
+		if re.match(r'<@.*>,? inventory', message):
+			response = "I'm holding "
+			if len(self.inventory) == 0:
+				response += "nothing."
+			elif len(self.inventory) == 1:
+				response += self.inventory[0]
+			elif len(self.inventory) == 2:
+				response += "%s and %s" % (self.inventory[0], self.inventory[1])
+			else:
+				for item in self.inventory[:-1]:
+					response += item + ", "
+				response += "and %s" % self.inventory[-1]
+			self.sendMessage(channel, response)
+			return
+
 		response = self.generateChain(message)
 		if response != '':
 			self.sendMessage(channel, response)
