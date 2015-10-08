@@ -52,9 +52,8 @@ class _processThread(threading.Thread):
 			for id in self.users:
 				text = text.replace(str(id), str(self.users[id]))
 
-			print '::[%s] <%s>: %s' % (channel, self.users[sender], text)
-
-			if (channel not in self.channelids):
+			print '::[%s] <%s> %s' % (channel, self.users[sender], text)
+			if (channel not in self.channelids) or (('<@%s>' % self.users[self.bot.ID]) in text):
 				self.bot.onPrivateMessageReceived(channel, sender, text)
 			else:
 				self.bot.onMessageReceived(channel, sender, text)
@@ -73,7 +72,6 @@ class _outputThread(threading.Thread):
 	def run (self):
 		while 1:
 			message = self.outputqueue.get(True)
-			print message[u'channel']
 			self.client.rtm_send_message(message[u'channel'], message[u'text'])
 			print '>> %s' % message[u'text']
 			time.sleep(1)
