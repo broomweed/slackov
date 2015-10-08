@@ -104,41 +104,56 @@ class MarkovBot(slackbot.Slackbot):
 
 		# PMs don't teach the bot anything, but will always get a response (if the bot can provide one)
 
-		if re.match(r'^<@.*>[:,]? take ', message):
-			item = re.sub(r'^<@.*>[:,]? take +', '', message)
-			# get info about user
-			callargs = {'token': self.TOKEN, 'user': sender}
-			info = json.loads(self.CLIENT.api_call('users.info', callargs))
-			item = re.sub('my', "%s's" % info['user']['name'], item)
-			item = re.sub('this', 'a', item)
-			response = "I'm now holding %s" % item
+
+		message = message.lower()
+		if re.match(r'^<@.*>[:,]? +please ', message):
+			message = re.sub(r'^<@.*>[:,]? +please +', '', message)
+			response = self.processCommand(message, sender)
+		else:
+			response = self.generateChain(message)
+
+		if response != '':
+			self.sendMessage(channel, response)
+
+	def processCommand(self, command, sender):
+
+		response = ''
+		# get info about user
+		callargs = {'token': self.TOKEN, 'user': sender}
+		userinfo = json.loads(self.CLIENT.api_call('users.info', callargs))['user']
+
+		if re.match(r'^(take|hold) ', command):
+			item = re.sub(r'^(take|hold) +', '', command)
+			item = re.sub('my', "%s's" % userinfo['name'], item)
+			item = re.sub('your', 'my', item)
+			item = re.sub(r'this ([aeiou])', r'an \1', item, 1)
+			item = re.sub('this', 'a', item, 1)
+			response = "now holding %s" % item
 			self.inventory.append(item)
 			if (len(self.inventory) > 3):
 				response += ", but had to drop %s" % self.inventory.pop(0)
-			self.sendMessage(channel, response)
-			return
 
-		if re.match(r'^<@.*>[:,]? drop ', message):
-			item = re.sub(r'^<@.*>[:,]? drop +', '', message)
-			# get info about user
-			callargs = {'token': self.TOKEN, 'user': sender}
-			info = json.loads(self.CLIENT.api_call('users.info', callargs))
-			# TODO: fix a/an
-			item = re.sub('that', 'a', item)
-			item = re.sub('the', 'a', item)
-			error_item = re.sub('my', 'your', item)
-			item = re.sub('my', "%s's" % info['user']['name'], item)
-			response = "I'm not holding %s" % error_item
+		elif re.match(r'drop ', command):
+			item = re.sub(r'drop +', '', command)
+			print "item: ", item
+			item = re.sub(r'(that|the) ([aeiou])', r'an \1', item, 1)
+			item = re.sub(r'(that|the)', r'a', item, 1)
+			# the error_item gets printed when it can't find one
+			error_item = re.sub('my', '%temp%', item)
+			error_item = re.sub('your', 'my', error_item)
+			error_item = re.sub('%temp%', 'your', error_item)
+			# the item is the actual string it looks for
+			item = re.sub('my', "%s's" % userinfo['name'], item)
+			item = re.sub('your', 'my', item)
+			response = "not holding %s" % error_item
 			if item in self.inventory:
-				response = "Dropped %s" % item
+				response = "dropped %s" % item
 			self.inventory = [x for x in self.inventory if x != item]
-			self.sendMessage(channel, response)
-			return
 
-		if re.match(r'<@.*>,? inventory', message):
-			response = "I'm holding "
+		elif re.match(r'(show|list) ?(inventory|items)?', command):
+			response = "holding "
 			if len(self.inventory) == 0:
-				response += "nothing."
+				response += "nothing"
 			elif len(self.inventory) == 1:
 				response += self.inventory[0]
 			elif len(self.inventory) == 2:
@@ -147,14 +162,11 @@ class MarkovBot(slackbot.Slackbot):
 				for item in self.inventory[:-1]:
 					response += item + ", "
 				response += "and %s" % self.inventory[-1]
-			self.sendMessage(channel, response)
-			return
 
-		response = self.generateChain(message)
-		if response != '':
-			self.sendMessage(channel, response)
+		else:
+			response = "MALFORMED USER COMMAND"
 
-
+		return response
 
 
 	def onQuit(self):
