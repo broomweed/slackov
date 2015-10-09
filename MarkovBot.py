@@ -23,9 +23,10 @@ class MarkovBot(slackbot.Slackbot):
 		slackbot.Slackbot.__init__(self, token, client, id)
 		
 		try:
+			self.facts = {}
+			self.inventory = []
 			self.loadDictionary()
 			print ('DICTIONARY LOADED SUCCESSFULLY')
-			self.inventory = []
 		except IOError:
 			print ('DICTIONARY COULD NOT BE LOADED')
 
@@ -163,6 +164,49 @@ class MarkovBot(slackbot.Slackbot):
 					response += item + ", "
 				response += "and %s" % self.inventory[-1]
 
+		elif re.match(r'remember ', command):
+			m = re.match(r'remember (that )?(.+) (is .+|are .+|have .+|has .+)', command)
+			if m and m.group(2) != "i":
+				response = "will remember that about " + m.group(2)
+				if m.group(2) in self.facts:
+					self.facts[m.group(2)].append(m.group(3))
+				else:
+					self.facts[m.group(2)] = [m.group(3)]
+			else:
+				m2 = re.match(r'remember (that )?i (am .+|have .+)', command)
+				if m2:
+					response = "will remember that about you"
+					fact = m2.group(2)
+					fact = re.sub('am', 'is', fact)
+					fact = re.sub('have', 'has', fact)
+					if userinfo['name'] in self.facts:
+						self.facts[userinfo['name']].append(fact)
+					else:
+						self.facts[userinfo['name']] = [fact]
+				else:
+					response = "MALFORMED USER COMMAND"
+
+		elif re.match(r'tell me about ', command):
+			m = re.match(r'tell me about +(.+)', command)
+			if m.group(1) in self.facts:
+				response = "%s %s" % (m.group(1), random.choice(self.facts[m.group(1)]))
+			elif m.group(1) == 'myself':
+				if userinfo['name'] in self.facts:
+					response = "%s %s" % (userinfo['name'], random.choice(self.facts[userinfo['name']]))
+				else:
+					response = "don't know anything about you"
+			else:
+				response = "don't know anything about " + m.group(1)
+
+		elif re.match(r'tell me something', command):
+			fact = random.choice(self.facts.keys())
+			response = "%s %s" % (fact, random.choice(self.facts[fact]))
+
+		elif re.match(r'tell me what you know', command):
+			for thing in self.facts.keys():
+				for fact in self.facts[thing]:
+					response += "%s %s\n" % (thing, fact)
+
 		else:
 			response = "MALFORMED USER COMMAND"
 
@@ -276,15 +320,27 @@ class MarkovBot(slackbot.Slackbot):
 
 	def saveDictionary(self):
         
-            	output = open('Markov_Dict.pkl', 'w')
-            	pickle.dump(self.dictionary, output)
-            	output.close()
+				output = open('Markov_Dict.pkl', 'w')
+				pickle.dump(self.dictionary, output)
+				output.close()
+
+				output = open('Facts.pkl', 'w')
+				pickle.dump({ 'facts': self.facts, 'inventory': self.inventory }, output)
+				output.close()
         
 
 	def loadDictionary(self):
         
 		input = open('Markov_Dict.pkl', 'r')
 		self.dictionary = pickle.load(input)
+		input.close()
+
+		input = open('Facts.pkl', 'r')
+		state = pickle.load(input)
+		if 'facts' in state:
+			self.facts = state['facts']
+		if 'inventory' in state:
+			self.inventory = state['inventory']
 		input.close()
 
 
