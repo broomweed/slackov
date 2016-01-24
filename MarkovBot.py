@@ -1,6 +1,7 @@
 import slackbot
 import time
 import random
+import math
 import pickle
 import json
 import re
@@ -9,7 +10,7 @@ import re
 class MarkovBot(slackbot.Slackbot):
         
 
-	talkBackFreq = 1
+	talkBackFreq = 0.3
 	isLearning = True
 	censorWords = True
 
@@ -40,7 +41,8 @@ class MarkovBot(slackbot.Slackbot):
 
 
 		# command handling
-		if sentByAdmin and ('!saveDict' in message):
+		#if sentByAdmin and ('!saveDict' in message):
+		if ('!saveDict' in message):
 			
 			try:
 				self.saveDictionary()
@@ -68,7 +70,8 @@ class MarkovBot(slackbot.Slackbot):
 			self.sendMessage(target, 'I AM ' + ('NOW' if self.isLearning else 'NO LONGER') + ' LEARNING')
 			return 
 
-		elif sentByAdmin and ('!talkback' in message):
+		#elif sentByAdmin and ('!talkback' in message):
+		elif ('!talkback' in message):
 			try:
 				self.talkBackFreq = float(message.split()[1])
 				self.sendMessage(target, ('RESPONDING PROBABILITY SET TO %3f' % self.talkBackFreq))
@@ -107,8 +110,9 @@ class MarkovBot(slackbot.Slackbot):
 
 
 		message = message.lower()
-		if re.match(r'^<@.*>[:,]? +please ', message):
-			message = re.sub(r'^<@.*>[:,]? +please +', '', message)
+		#if re.match(r'^<@.*>[:,]? ', message):
+		if re.match(r'^manatee ', message):
+			message = re.sub(r'manatee +', '', message)
 			response = self.processCommand(message, sender)
 		else:
 			response = self.generateChain(message)
@@ -118,6 +122,7 @@ class MarkovBot(slackbot.Slackbot):
 
 	def processCommand(self, command, sender):
 
+		print "command::", command
 		response = ''
 		# get info about user
 		callargs = {'token': self.TOKEN, 'user': sender}
@@ -125,13 +130,14 @@ class MarkovBot(slackbot.Slackbot):
 
 		if re.match(r'^(take|hold) ', command):
 			item = re.sub(r'^(take|hold) +', '', command)
-			item = re.sub('my', "%s's" % userinfo['name'], item)
-			item = re.sub('your', 'my', item)
-			item = re.sub(r'this ([aeiou])', r'an \1', item, 1)
-			item = re.sub('this', 'a', item, 1)
+			item = re.sub(r'\bmy\b', "%s's" % userinfo['name'], item)
+			item = re.sub(r'\bme\b', "%s" % userinfo['name'], item)
+			item = re.sub(r'\byour\b', 'my', item)
+			item = re.sub(r'\bthis ([aeiou])', r'an \1', item, 1)
+			item = re.sub(r'\bthis\b', 'a', item, 1)
 			response = "now holding %s" % item
 			self.inventory.append(item)
-			if (len(self.inventory) > 3):
+			if (len(self.inventory) > 6):
 				response += ", but had to drop %s" % self.inventory.pop(0)
 
 		elif re.match(r'drop ', command):
@@ -140,12 +146,15 @@ class MarkovBot(slackbot.Slackbot):
 			item = re.sub(r'(that|the) ([aeiou])', r'an \1', item, 1)
 			item = re.sub(r'(that|the)', r'a', item, 1)
 			# the error_item gets printed when it can't find one
-			error_item = re.sub('my', '%temp%', item)
-			error_item = re.sub('your', 'my', error_item)
-			error_item = re.sub('%temp%', 'your', error_item)
+			error_item = re.sub(r'\bmy\b', '%temp%', item)
+			error_item = re.sub(r'\bme\b', '%temp2%', item)
+			error_item = re.sub(r'\byour\b', 'my', error_item)
+			error_item = re.sub(r'\b%temp%\b', 'your', error_item)
+			error_item = re.sub(r'\b%temp2%\b', 'you', error_item)
 			# the item is the actual string it looks for
-			item = re.sub('my', "%s's" % userinfo['name'], item)
-			item = re.sub('your', 'my', item)
+			item = re.sub(r'my', "%s's" % userinfo['name'], item)
+			item = re.sub(r'me', "%s" % userinfo['name'], item)
+			item = re.sub(r'\byour\b', 'my', item)
 			response = "not holding %s" % error_item
 			if item in self.inventory:
 				response = "dropped %s" % item
@@ -177,12 +186,57 @@ class MarkovBot(slackbot.Slackbot):
 				if m2:
 					response = "will remember that about you"
 					fact = m2.group(2)
-					fact = re.sub('am', 'is', fact)
-					fact = re.sub('have', 'has', fact)
+					fact = re.sub(r'\bam\b', 'is', fact)
+					fact = re.sub(r'\bhave\b', 'has', fact)
+					fact = re.sub(r'\blike\b', 'likes', fact)
 					if userinfo['name'] in self.facts:
 						self.facts[userinfo['name']].append(fact)
 					else:
 						self.facts[userinfo['name']] = [fact]
+				else:
+					response = "MALFORMED USER COMMAND"
+
+		elif re.match(r'forget ', command):
+			m = re.match(r'forget (that )?(.+) (is .+|are .+|have .+|has .+)', command)
+			if m and m.group(2) != "i":
+				response = "will forget that about " + m.group(2)
+				if m.group(2) in self.facts:
+					origNum = len(self.facts[m.group(2)])
+					self.facts[m.group(2)] = [x for x in self.facts[m.group(2)] if x != m.group(3)];
+					newNum = len(self.facts[m.group(2)])
+					if origNum - newNum == 0:
+						response = "didn't know that about %s" % m.group(2)
+					else:
+						if origNum - newNum > 1:
+							response = "forgot %d things" % (origNum - newNum)
+						else:
+							response = "forgot that %s %s" % (m.group(2), m.group(3))
+					if newNum == 0:
+						del self.facts[m.group(2)]
+				else:
+					response = "never knew anything about %s" % m.group(2)
+			else:
+				m2 = re.match(r'forget (that )?i (am .+|have .+|like .+)', command)
+				if m2:
+					response = "will forget that about you"
+					fact = m2.group(2)
+					fact = re.sub(r'\bam\b', 'is', fact)
+					fact = re.sub(r'\bhave\b', 'has', fact)
+					if userinfo['name'] in self.facts:
+						origNum = len(self.facts[userinfo['name']])
+						self.facts[userinfo['name']] = [x for x in self.facts[userinfo['name']] if x != fact];
+						newNum = len(self.facts[userinfo['name']])
+						if origNum - newNum == 0:
+							response = "didn't know that about you"
+						else:
+							if origNum - newNum > 1:
+								response = "forgot %d things" % (origNum - newNum)
+							else:
+								response = "forgot that %s %s" % (userinfo['name'], fact)
+						if newNum == 0:
+							del self.facts[userinfo['name']]
+					else:
+						response = "never knew anything about you to begin with"
 				else:
 					response = "MALFORMED USER COMMAND"
 
@@ -206,6 +260,23 @@ class MarkovBot(slackbot.Slackbot):
 			for thing in self.facts.keys():
 				for fact in self.facts[thing]:
 					response += "%s %s\n" % (thing, fact)
+
+		elif re.match(r'do math', command):
+			num1 = random.randint(1, 10)
+			num2 = random.randint(1, 10)
+			op = random.choice(['plus', 'minus', 'times', 'over', 'sqrt', 'pwr'])
+			if op == 'plus':
+				response = "%d plus %d is %d" % (num1, num2, num1 + num2)
+			elif op == 'minus':
+				response = "%d minus %d is %d" % (num1, num2, num1 - num2)
+			elif op == 'times':
+				response = "%d times %d is %d" % (num1, num2, num1 * num2)
+			elif op == 'over':
+				response = "%d over %d is %f" % (num1, num2, float(num1) / float(num2))
+			elif op == 'sqrt':
+				response = "the square root of %d is %f" % (num1, math.sqrt(num1))
+			elif op == 'pwr':
+				response = "%d to the power of %d is %d" % (num1, num2, num1 ** num2)
 
 		else:
 			response = "MALFORMED USER COMMAND"
