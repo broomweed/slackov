@@ -53,10 +53,8 @@ class _processThread(threading.Thread):
 				text = text.replace(str(id), str(self.users[id]))
 
 			print '::[%s] <%s> %s' % (channel, self.users[sender], text)
-			if (channel not in self.channelids) or (self.users[self.bot.ID] in text):
-				self.bot.onPrivateMessageReceived(channel, sender, text)
-			else:
-				self.bot.onMessageReceived(channel, sender, text)
+			#else:
+			self.bot.onMessageReceived(channel, sender, text)
 
 
 
@@ -128,6 +126,9 @@ class Slackbot:
 
 	def sendMessage (self, channel, text):
 		self._outputqueue.put({u'channel': channel, u'text': text})
+	
+	def setTopic (self, channel, topic):
+		self.channels.setTopic({u'channel': channel, u'topic': topic})
 
 
 

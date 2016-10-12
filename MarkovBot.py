@@ -5,14 +5,23 @@ import math
 import pickle
 import json
 import re
+import subprocess
 
 
 class MarkovBot(slackbot.Slackbot):
         
 
-	talkBackFreq = 0.3
+	talkBackFreq = 0.01
 	isLearning = True
 	censorWords = True
+
+	commandSought = ""
+
+	invSize = 6
+
+	ignore = [ 'talkback', 'saveDict', 'intercourse', 'fuck', 'responding probability', 'dictionary saved successfully', 'remember that about', 'malformed' ]
+
+	repeatWords = []
 
 	STOPWORD = 'BOGON'
         
@@ -26,6 +35,7 @@ class MarkovBot(slackbot.Slackbot):
 		try:
 			self.facts = {}
 			self.inventory = []
+			self.commands = {}
 			self.loadDictionary()
 			print ('DICTIONARY LOADED SUCCESSFULLY')
 		except IOError:
@@ -37,92 +47,70 @@ class MarkovBot(slackbot.Slackbot):
 
 		callargs = {'token': self.TOKEN, 'user': sender}
 		info = self.CLIENT.api_call('users.info', callargs)
+		userinfo = json.loads(info)['user']
 		sentByAdmin = json.loads(info)['user']['is_admin']
 
 
 		# command handling
 		#if sentByAdmin and ('!saveDict' in message):
-		if ('!saveDict' in message):
-			
-			try:
-				self.saveDictionary()
-				self.sendMessage(target, 'DICTIONARY SAVED SUCCESSFULLY')
-			except IOError:
-				self.sendMessage(target, 'DICTIONARY COULD NOT BE SAVED')
-			return
-                
-		elif sentByAdmin and ('!loadDict' in message):
-			
-			try:
-				self.loadDictionary()
-				self.sendMessage(target, 'DICTIONARY LOADED SUCCESSFULLY')
-			except IOError:
-				self.sendMessage(target, 'DICTIONARY COULD NOT BE LOADED')
-			return		
-
-		elif sentByAdmin and ('!eraseDict' in message):
-
-			self.dictionary = { self.STOPWORD : ([self.STOPWORD], [self.STOPWORD]) }
-			self.sendMessage(target, 'DICTIONARY ERASED (NOT SAVED YET)')
-		
-		elif sentByAdmin and ('!learn' in message):
-			self.toggleLearn()
-			self.sendMessage(target, 'I AM ' + ('NOW' if self.isLearning else 'NO LONGER') + ' LEARNING')
-			return 
-
-		#elif sentByAdmin and ('!talkback' in message):
-		elif ('!talkback' in message):
-			try:
-				self.talkBackFreq = float(message.split()[1])
-				self.sendMessage(target, ('RESPONDING PROBABILITY SET TO %3f' % self.talkBackFreq))
-			except IndexError:
-				self.sendMessage(target, 'MALFORMED COMMAND')
-
-		elif sentByAdmin and ('!quit' in message):
-			self.quit()
 
 
 #	#	# all other messages handled here
-		elif sender != 'USLACKBOT':
+		if sender != 'USLACKBOT':
 			
 			message = message.lower()
 
-			if self.isLearning:
+			if self.commandSought != "":
+				self.commands[self.commandSought].append(message)
+				print "Saved '" + message + "' under '" + self.commandSought + "'"
+				self.commandSought = ""
 
-				sentences = message.split('. ')
-				for sentence in sentences:
-					if sentence.endswith('.'):	# get rid of last .
-						sentence = sentence[:-1]
-					self.interpretMessage(sentence)
-                    
+			response = ''
+			#if (target not in self.channelids) or (self.users[self.bot.ID] in text):
+			#if (target not in self.channelids) or (message.startswith('manatee')):
+			# TODO make it handle private groups properly
+			if (message.startswith('manatee')):
+				print "That's a PM"
+				response = self.onPrivateMessageReceived(target, sender, message)
 
-             		if random.random() < self.talkBackFreq:
+			else:
 
-                    		response = self.generateChain(message)
+				if self.isLearning:
 
-				if response != '':
-                    			self.sendMessage(target, response)
+					sentences = message.split('. ')
+					for sentence in sentences:
+						if sentence.endswith('.'):	# get rid of last .
+							sentence = sentence[:-1]
+						self.interpretMessage(sentence)
+						
+
+						if random.random() < self.talkBackFreq:
+								response = self.generateChain(message)
+
+			if response != '' and response is not None:
+				response = fixGrammar(response)
+				self.sendMessage(target, response)
                 
         
 	def onPrivateMessageReceived (self, channel, sender, message):
 
 		# PMs don't teach the bot anything, but will always get a response (if the bot can provide one)
 
-
 		message = message.lower()
 		#if re.match(r'^<@.*>[:,]? ', message):
-		if re.match(r'^manatee ', message):
-			message = re.sub(r'manatee +', '', message)
-			response = self.processCommand(message, sender)
+		if re.match(r'manatee([,:])? ', message) or re.match(r'<@.*>:,? ', message):
+			message = re.sub(r'.*manatee([,:])? +', '', message)
+			message = re.sub(r'<@manatee>([,:])? +', '', message)
+			response = self.processCommand(message, sender, channel)
 		else:
 			response = self.generateChain(message)
 
 		if response != '':
 			self.sendMessage(channel, response)
 
-	def processCommand(self, command, sender):
+	def processCommand(self, command, sender, channel):
 
-		print "command::", command
+		print "command::" + command
 		response = ''
 		# get info about user
 		callargs = {'token': self.TOKEN, 'user': sender}
@@ -137,20 +125,20 @@ class MarkovBot(slackbot.Slackbot):
 			item = re.sub(r'\bthis\b', 'a', item, 1)
 			response = "now holding %s" % item
 			self.inventory.append(item)
-			if (len(self.inventory) > 6):
+			if (len(self.inventory) > self.invSize):
 				response += ", but had to drop %s" % self.inventory.pop(0)
 
 		elif re.match(r'drop ', command):
 			item = re.sub(r'drop +', '', command)
 			print "item: ", item
-			item = re.sub(r'(that|the) ([aeiou])', r'an \1', item, 1)
-			item = re.sub(r'(that|the)', r'a', item, 1)
+			#item = re.sub(r'\b(that|the) ([aeiou])', r'an \1', item, 1)
+			#item = re.sub(r'\b(that|the)\b', r'a', item, 1)
 			# the error_item gets printed when it can't find one
 			error_item = re.sub(r'\bmy\b', '%temp%', item)
 			error_item = re.sub(r'\bme\b', '%temp2%', item)
 			error_item = re.sub(r'\byour\b', 'my', error_item)
-			error_item = re.sub(r'\b%temp%\b', 'your', error_item)
-			error_item = re.sub(r'\b%temp2%\b', 'you', error_item)
+			error_item = re.sub(r'%temp%', 'your', error_item)
+			error_item = re.sub(r'%temp2%', 'you', error_item)
 			# the item is the actual string it looks for
 			item = re.sub(r'my', "%s's" % userinfo['name'], item)
 			item = re.sub(r'me', "%s" % userinfo['name'], item)
@@ -175,26 +163,33 @@ class MarkovBot(slackbot.Slackbot):
 
 		elif re.match(r'remember ', command):
 			m = re.match(r'remember (that )?(.+) (is .+|are .+|have .+|has .+)', command)
-			if m and m.group(2) != "i":
-				response = "will remember that about " + m.group(2)
-				if m.group(2) in self.facts:
-					self.facts[m.group(2)].append(m.group(3))
-				else:
-					self.facts[m.group(2)] = [m.group(3)]
-			else:
-				m2 = re.match(r'remember (that )?i (am .+|have .+)', command)
-				if m2:
-					response = "will remember that about you"
-					fact = m2.group(2)
-					fact = re.sub(r'\bam\b', 'is', fact)
-					fact = re.sub(r'\bhave\b', 'has', fact)
-					fact = re.sub(r'\blike\b', 'likes', fact)
-					if userinfo['name'] in self.facts:
-						self.facts[userinfo['name']].append(fact)
+			if m:
+				if m and m.group(2) != "i":
+					response = "will remember that about " + m.group(2)
+					if m.group(2) in self.facts:
+						self.facts[m.group(2)].append(m.group(3))
 					else:
-						self.facts[userinfo['name']] = [fact]
+						self.facts[m.group(2)] = [m.group(3)]
 				else:
-					response = "MALFORMED USER COMMAND"
+					m2 = re.match(r'remember (that )?i (am .+|have .+)', command)
+					if m2:
+						response = "will remember that about you"
+						fact = m2.group(2)
+						fact = re.sub(r'\bam\b', 'is', fact)
+						fact = re.sub(r'\bhave\b', 'has', fact)
+						fact = re.sub(r'\blike\b', 'likes', fact)
+						if userinfo['name'] in self.facts:
+							self.facts[userinfo['name']].append(fact)
+						else:
+							self.facts[userinfo['name']] = [fact]
+					else:
+						response = "MALFORMED USER COMMAND"
+			else:
+				if userinfo['name'] in self.facts:
+					self.facts[userinfo['name']].append('said "' + command + '"')
+				else:
+					self.facts[userinfo['name']] = ['said "' + command + '"']
+				response = "will remember you said that"
 
 		elif re.match(r'forget ', command):
 			m = re.match(r'forget (that )?(.+) (is .+|are .+|have .+|has .+)', command)
@@ -261,6 +256,11 @@ class MarkovBot(slackbot.Slackbot):
 				for fact in self.facts[thing]:
 					response += "%s %s\n" % (thing, fact)
 
+		elif re.match(r'commlist', command):
+			for thing in self.commands.keys():
+				for comm in self.commands[thing]:
+					response += "%s: %s\n" % (thing, comm)
+
 		elif re.match(r'do math', command):
 			num1 = random.randint(1, 10)
 			num2 = random.randint(1, 10)
@@ -278,8 +278,129 @@ class MarkovBot(slackbot.Slackbot):
 			elif op == 'pwr':
 				response = "%d to the power of %d is %d" % (num1, num2, num1 ** num2)
 
+		elif re.match(r'set inv(entory)? size to \d+', command):
+			if userinfo['name'] == 'broomweed':
+				m = re.match(r'set inv size to (\d+)', command)
+				self.invSize = int(m.group(1))
+				response = "inventory size is now %d" % int(m.group(1))
+			else:
+				response = "only broomweed can do this, %s" % userinfo['name']
+
+		elif re.match(r'say .+', command):
+			m = re.match('say +(.+)', command)
+			response = m.group(1)
+
+		elif ('save dict' in command):
+			if userinfo['name'] != 'broomweed':
+				response = "only broomweed can do this for me, %s." % userinfo['name']
+				return response
+				
+			try:
+				self.saveDictionary()
+				response = 'DICTIONARY SAVED SUCCESSFULLY'
+			except IOError:
+				response = 'DICTIONARY COULD NOT BE SAVED'
+
+		elif ('load dict' in command):
+			if userinfo['name'] != 'broomweed':
+				response = "only broomweed can do this for me, %s." % userinfo['name']
+				return response
+			
+			try:
+				self.loadDictionary()
+				response = 'DICTIONARY LOADED SUCCESSFULLY'
+			except IOError:
+				response = 'DICTIONARY COULD NOT BE LOADED'
+
+		elif ('erase dict' in command):
+			if userinfo['name'] != 'broomweed':
+				response = "only broomweed can do this for me, %s." % userinfo['name']
+				return response
+
+			response = '!!! not sure you really want to do this !!!'
+
+			#self.dictionary = { self.STOPWORD : ([self.STOPWORD], [self.STOPWORD]) }
+			#response = 'DICTIONARY ERASED (NOT SAVED YET)'
+		
+		elif ('learn' in command):
+			if userinfo['name'] != 'broomweed':
+				response = "only broomweed can do this for me, %s." % userinfo['name']
+				return response
+
+			self.toggleLearn()
+			response = 'I AM ' + ('NOW' if self.isLearning else 'NO LONGER') + ' LEARNING'
+
+		#elif sentByAdmin and ('!talkback' in command):
+		elif ('talkback' in command):
+			if userinfo['name'] != 'broomweed':
+				response = "only broomweed can do this for me. current talkback = %f" % self.talkBackFreq
+				return response
+
+			try:
+				self.talkBackFreq = float(command.split()[1])
+				response = ('RESPONDING PROBABILITY SET TO %3f' % self.talkBackFreq)
+			except IndexError:
+				response = 'MALFORMED COMMAND'
+			except ValueError:
+				response = "%s isn't a number!" % command.split()[1]
+
+		elif 'joke' in command:
+			joke = ''
+			while 'Q:' not in joke:
+				joke = subprocess.check_output(['fortune'])
+			response = joke
+
+		elif command.startswith('leave'):
+			print self.CLIENT, channel
+			print "&", self.CLIENT.api_call('channels.leave', {'channel': channel})
+
+		elif command.startswith('repeat '):
+			m = re.match(r'repeat +([^ ]+)', command)
+			self.repeatWords.append(m.group(1))
+			response = '"%s" now in repeat-mode' % m.group(1)
+
+		elif command.startswith('norepeat '):
+			m = re.match(r'norepeat +([^ ]+)', command)
+			self.repeatWords = [r for r in self.repeatWords if r != m.group(1)]
+			response = '"%s" no longer in repeat-mode' % m.group(1)
+
+		elif 'good night' in command or 'goodnight' in command:
+			if userinfo['name'] == 'broomweed':
+				try:
+					self.saveDictionary()
+					self.sendMessage(channel, 'goodnight!')
+					self.quit()
+				except IOError:
+					self.sendMessage(channel, "couldn't save dictionary. please disable manually")
+			else:
+				response = "nice try but no"
+
 		else:
-			response = "MALFORMED USER COMMAND"
+			# MALFORMED USER COMMAND
+			#m = re.match(r"(\W)+\b", command)
+			m = re.match(r'([^ ]+)', command)
+			if not m:
+				response = "MALFORMED USER COMMAND"
+			else:
+				commandPhrase = m.group(1)
+				if commandPhrase in self.repeatWords:
+					if commandPhrase in self.commands:
+						if len(self.commands[commandPhrase]) >= 3:
+							response = commandPhrase + "; " + random.choice(self.commands[commandPhrase]).replace("manatee", userinfo['name'])
+						else:
+							self.commandSought = commandPhrase
+							response = self.generateChain(command)
+					else:
+						response = self.generateChain(command)
+						self.commands[commandPhrase] = []
+						self.commandSought = commandPhrase
+				else:
+					response = self.generateChain(command)
+
+			#response = "MALFORMED USER COMMAND"
+
+		if response is not None and response != '':
+			response = fixGrammar(response)
 
 		return response
 
@@ -295,12 +416,18 @@ class MarkovBot(slackbot.Slackbot):
 
 	def interpretMessage(self, message):
 
-            	words = message.split()
-            	words.append(self.STOPWORD)
+		print "Interpreting message."
+		for i in self.ignore:
+			if i in message:
+				print "== Going to ignore that message. =="
+				return
+
+		words = message.split()
+		words.append(self.STOPWORD)
 		words.insert(0, self.STOPWORD)
             
-            	index = 0
-            	word = words[index]
+		index = 0
+		word = words[index]
 
             	while (True):
 			
@@ -396,9 +523,8 @@ class MarkovBot(slackbot.Slackbot):
 				output.close()
 
 				output = open('Facts.pkl', 'w')
-				pickle.dump({ 'facts': self.facts, 'inventory': self.inventory }, output)
+				pickle.dump({ 'facts': self.facts, 'inventory': self.inventory, 'commands': self.commands, 'repeat': self.repeatWords }, output)
 				output.close()
-        
 
 	def loadDictionary(self):
         
@@ -412,6 +538,10 @@ class MarkovBot(slackbot.Slackbot):
 			self.facts = state['facts']
 		if 'inventory' in state:
 			self.inventory = state['inventory']
+		if 'commands' in state:
+			self.commands = state['commands']
+		if 'repeat' in state:
+			self.repeatWords = state['repeat']
 		input.close()
 
 
@@ -453,3 +583,46 @@ class MarkovBot(slackbot.Slackbot):
 
 
 
+def fixGrammar(response):
+	openquotes = len(re.findall('(^| )"', response))
+	closequotes = len(re.findall(r'"[.!? ]', response))
+	openparens = response.count('(')
+	closeparens = response.count(')')
+	openticks = len(re.findall('(^| )`', response))
+	closeticks = len(re.findall(r'`[.!? ]', response))
+	if not re.match(r'.*[.?!]$', response):
+		response = response + '.'
+	
+	response = response.replace('```', '')
+
+	while openquotes > closequotes:
+		response += '"'
+		openquotes -= 1
+	while closequotes > openquotes:
+		response = '"' + response
+		closequotes -= 1
+	while openparens > closeparens:
+		response += ')'
+		openparens -= 1
+	while closeparens > openparens:
+		response = '(' + response
+		closeparens -= 1
+	while openticks > closeticks:
+		response += '`'
+		openticks -= 1
+	while closeticks > openticks:
+		response = '`' + response
+		closeticks -= 1
+
+	for i, c in enumerate(response):
+		if c.isalpha() or c.isdigit():
+			# Don't try to capitalize parentheses or whatever.
+			break
+
+	if not response.startswith("Q:"):
+		# Don't try to fix capitalization on jokes.
+		response = response[:i] + response[i:].capitalize()
+		response = re.sub(r'([!?.][)"\]`]?) *([a-z])', lambda match: r'%s %s' % (match.group(1), match.group(2).upper()), response)
+
+	response = re.sub(r'\bi\b', 'I', response)
+	return response
